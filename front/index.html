@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>부동산 검증 인증서 발급</title>
+</head>
+<body>
+  <h1>부동산 검증 인증서 발급 데모</h1>
+
+  <!-- 1) 부동산 주소 입력 영역 -->
+  <label for="propertyAddressInput">부동산 주소를 입력하세요:</label>
+  <input type="text" id="propertyAddressInput" placeholder="예: 서울시 강남구 ..."/>
+  <button id="btnGenerateUID">UID 생성</button>
+
+  <br/><br/>
+
+  <!-- 2) 생성된 UID 표시 -->
+  <label for="uidField">생성된 UID:</label>
+  <input type="text" id="uidField" readonly />
+
+  <br/><br/>
+
+  <!-- 3) 블록체인에 전송, 인증서 가져오기 -->
+  <button id="btnSendToContract">컨트랙트에 UID 전송</button>
+  <button id="btnGetCertificate">인증서 조회</button>
+
+  <br/><br/>
+
+  <!-- 4) 결과 표시 영역 -->
+  <div id="resultArea"></div>
+
+  <!-- Ethers.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"
+          integrity="sha256-...생략..."
+          crossorigin="anonymous"></script>
+
+  <script>
+    /********************************************************************
+     * 1. 배포된 컨트랙트 정보 (필수 수정)
+     ********************************************************************/
+    const CONTRACT_ADDRESS = "0x1234567890ABCDEF1234567890ABCDEF12345678";
+    const CONTRACT_ABI = [
+      // 실제 배포된 컨트랙트의 ABI를 여기에 넣어야 합니다.
+      // 예시:
+      {
+        "inputs": [
+          { "internalType": "string", "name": "_uid", "type": "string" }
+        ],
+        "name": "issueCertificate",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      },
+      {
+        "inputs": [
+          { "internalType": "string", "name": "_uid", "type": "string" }
+        ],
+        "name": "getCertificate",
+        "outputs": [
+          { "internalType": "string", "name": "", "type": "string" }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      }
+    ];
+
+    /********************************************************************
+     * 2. HTML 요소 불러오기
+     ********************************************************************/
+    const propertyAddressInput = document.getElementById("propertyAddressInput");
+    const btnGenerateUID       = document.getElementById("btnGenerateUID");
+    const uidField             = document.getElementById("uidField");
+    const btnSendToContract    = document.getElementById("btnSendToContract");
+    const btnGetCertificate    = document.getElementById("btnGetCertificate");
+    const resultArea           = document.getElementById("resultArea");
+
+    /********************************************************************
+     * 3. ethers.js 사용을 위한 provider, signer 설정
+     ********************************************************************/
+    let provider;
+    let signer;
+    let contract;
+
+    async function initEthers() {
+      // 메타마스크(또는 지갑)이 설치되어 있는지 확인
+      if (window.ethereum) {
+        // 메타마스크 provider를 ethers에서 사용
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+
+        // 사용자의 지갑 주소 사용 승인(팝업 뜸)
+        await provider.send("eth_requestAccounts", []);
+
+        // signer는 트랜잭션 전송(쓰기가능) 주체
+        signer = provider.getSigner();
+
+        // 컨트랙트 인스턴스 생성 (읽기/쓰기 가능)
+        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+        console.log("Ethers initialized!");
+      } else {
+        alert("메타마스크가 설치되어 있지 않습니다. 설치 후 다시 시도해주세요.");
+      }
+    }
+
+    // 페이지 로드 시 자동 실행
+    window.addEventListener("load", () => {
+      initEthers();
+    });
+
+    /********************************************************************
+     * 4. UID 생성 로직
+     ********************************************************************/
+    function generateUID(addressString) {
+      // 단순 예시: propertyAddress + timestamp를 해싱
+      // 해싱 외에 단순 uuid 라이브러리(또는 난수) 등을 이용해도 됩니다.
+      const currentTime = new Date().getTime().toString();
+      const combined = addressString + currentTime;
+
+      // ethers.utils를 사용한 keccak256 해시
+      const uid = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(combined));
+      return uid;
+    }
+
+    btnGenerateUID.addEventListener("click", () => {
+      const userInput = propertyAddressInput.value.trim();
+      if (!userInput) {
+        alert("부동산 주소를 입력하세요!");
+        return;
+      }
+      const newUID = generateUID(userInput);
+      uidField.value = newUID;
+    });
+
+    /********************************************************************
+     * 5. 컨트랙트에 UID 전송 -> 인증서 발급(트랜잭션)
+     ********************************************************************/
+    btnSendToContract.addEventListener("click", async () => {
+      try {
+        const uid = uidField.value.trim();
+        if (!uid) {
+          alert("UID가 없습니다. 먼저 UID를 생성하세요.");
+          return;
+        }
+
+        // issueCertificate 함수를 호출한다고 가정 (예: "인증서를 발급"하는 메소드)
+        const tx = await contract.issueCertificate(uid);
+        // 트랜잭션이 블록에 기록될 때까지 대기
+        const receipt = await tx.wait();
+
+        console.log("트랜잭션 전송 완료:", receipt);
+        resultArea.innerHTML = `<p>인증서 발급 트랜잭션이 성공적으로 전송되었습니다!<br/>
+          Tx Hash: ${receipt.transactionHash}</p>`;
+      } catch (error) {
+        console.error(error);
+        resultArea.innerHTML = `<p style="color:red;">트랜잭션 실패: ${error.message}</p>`;
+      }
+    });
+
+    /********************************************************************
+     * 6. 컨트랙트에서 인증서(검증 결과) 가져오기
+     ********************************************************************/
+    btnGetCertificate.addEventListener("click", async () => {
+      try {
+        const uid = uidField.value.trim();
+        if (!uid) {
+          alert("UID가 없습니다. 먼저 UID를 생성 후 시도하세요.");
+          return;
+        }
+
+        // 컨트랙트의 getCertificate 함수를 호출한다고 가정
+        const certificate = await contract.getCertificate(uid);
+        console.log("인증서 정보:", certificate);
+
+        if (certificate) {
+          resultArea.innerHTML = `<p>UID에 해당하는 인증서: ${certificate}</p>`;
+        } else {
+          resultArea.innerHTML = `<p>해당 UID에 대한 인증서가 없습니다.</p>`;
+        }
+      } catch (error) {
+        console.error(error);
+        resultArea.innerHTML = `<p style="color:red;">인증서 조회 실패: ${error.message}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>

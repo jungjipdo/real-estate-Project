@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>부동산 검증 - 도로명주소만 입력 (UID 자동화)</title>
+</head>
+<body>
+  <h1>부동산 검증 데모</h1>
+
+  <!-- 1) 도로명주소 입력 -->
+  <div>
+    <label for="propertyAddress">도로명 주소 입력:</label><br/>
+    <input type="text" id="propertyAddress" placeholder="예 서울특별시 강남구 테헤란로 123" style="width: 350px;">
+  </div>
+  <br/>
+
+  <!-- 2) 검증 신청 & 조회 버튼 -->
+  <button id="btnRequestVerification">검증 신청</button>
+  <button id="btnGetCertificate">검증 결과 조회</button>
+
+  <hr/>
+
+  <!-- 결과 표시 -->
+  <div id="resultArea"></div>
+
+  <!-- Ethers.js (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+
+  <script>
+    /*************************************************************
+     * 전역 변수 및 설정
+     *************************************************************/
+    let provider;
+    let signer;
+    let contract;
+
+    // 실제 배포된 컨트랙트 주소 & ABI (스마트 컨트랙트 내용은 기존과 동일)
+    const CONTRACT_ADDRESS = "0x1234567890ABCDEF1234567890ABCDEF12345678"; 
+    const CONTRACT_ABI = [
+      {
+        "inputs": [
+          { "internalType": "string", "name": "_uid", "type": "string" }
+        ],
+        "name": "issueCertificate",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+      },
+      {
+        "inputs": [
+          { "internalType": "string", "name": "_uid", "type": "string" }
+        ],
+        "name": "getCertificate",
+        "outputs": [
+          { "internalType": "bool", "name": "", "type": "bool" },
+          { "internalType": "uint256", "name": "", "type": "uint256" },
+          { "internalType": "string", "name": "", "type": "string" },
+          { "internalType": "uint256", "name": "", "type": "uint256" }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+      }
+      // 나머지 필요한 ABI...
+    ];
+
+    // 사용자가 입력한 주소 → 해시(UID) 로 변환할 때 임시로 저장
+    let currentUID = "";
+
+    // HTML 요소
+    const propertyAddressInput = document.getElementById("propertyAddress");
+    const btnRequestVerification = document.getElementById("btnRequestVerification");
+    const btnGetCertificate = document.getElementById("btnGetCertificate");
+    const resultArea = document.getElementById("resultArea");
+
+    /*************************************************************
+     * 1. 페이지 로드시, MetaMask provider 세팅
+     *************************************************************/
+    window.addEventListener("load", async () => {
+      if (window.ethereum) {
+        provider = new ethers.providers.Web3Provider(window.ethereum);
+        // MetaMask 계정 연결 승인
+        await provider.send("eth_requestAccounts", []);
+        signer = provider.getSigner();
+
+        // 컨트랙트 인스턴스
+        contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+        console.log("Ethers initialized - connected to contract:", CONTRACT_ADDRESS);
+      } else {
+        alert("MetaMask(혹은 Web3 지갑)가 설치되어 있지 않습니다.");
+      }
+    });
+
+    /*************************************************************
+     * 2. UID 생성 (프론트엔드)
+     *    - 사용자 입력 주소 + timestamp 등을 섞어서 해시 생성
+     *************************************************************/
+    function generateUID(addressStr) {
+      const now = new Date().getTime().toString();
+      // 주소 + 현재시간(밀리초) 합쳐서 keccak256
+      const raw = addressStr + now;
+
+      // keccak256 (ethers.js)
+      const uidBytes = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(raw));
+      // uidBytes: e.g. "0xabc123...32바이트 해시..."
+
+      return uidBytes; 
+    }
+
+    /*************************************************************
+     * 3. "검증 신청" 버튼
+     *    - 사용자 입력 도로명 주소 -> UID 생성 -> issueCertificate(uid)
+     *    - 완료 후 currentUID에 저장
+     *************************************************************/
+    btnRequestVerification.addEventListener("click", async () => {
+      try {
+        const addressInput = propertyAddressInput.value.trim();
+        if (!addressInput) {
+          alert("도로명 주소를 입력해주세요.");
+          return;
+        }
+
+        // (1) UID 생성
+        currentUID = generateUID(addressInput);
+        console.log("Generated UID:", currentUID);
+
+        // (2) 컨트랙트의 issueCertificate(uid) 호출
+        //     트랜잭션이므로 기다려야 함
+        const tx = await contract.issueCertificate(currentUID);
+
+        resultArea.innerHTML = "검증 신청 중... (트랜잭션 전송 중)";
+        const receipt = await tx.wait();  // 블록에 기록될 때까지 대기
+
+        resultArea.innerHTML = `
+          <p>검증 신청 완료!<br/>
+          Tx Hash: ${receipt.transactionHash}<br/>
+          UID(해시): ${currentUID} (사용자에게는 보이지 않아도 됨)
+          </p>
+        `;
+      } catch (err) {
+        console.error(err);
+        resultArea.innerHTML = `<p style="color:red;">에러 발생: ${err.message}</p>`;
+      }
+    });
+
+    /*************************************************************
+     * 4. "검증 결과 조회" 버튼
+     *    - currentUID로 getCertificate(uid) 호출 -> 결과 표시
+     *************************************************************/
+    btnGetCertificate.addEventListener("click", async () => {
+      try {
+        if (!currentUID) {
+          alert("아직 UID가 없습니다. 먼저 '검증 신청'을 해주세요.");
+          return;
+        }
+
+        // getCertificate(uid) -> (bool isIssued, uint256 score, string rating, uint256 issuedAt)
+        const [isIssued, score, rating, issuedAt] = await contract.getCertificate(currentUID);
+
+        if (!isIssued) {
+          resultArea.innerHTML = `
+            <p>아직 인증서가 발급되지 않았습니다. UID=${currentUID}</p>
+          `;
+        } else {
+          // 블록 타임스탬프(issuedAt)를 사람이 읽을 수 있는 날짜로 변환
+          const date = new Date(issuedAt.toNumber() * 1000);
+          const formatted = date.toLocaleString();
+
+          resultArea.innerHTML = `
+            <p>UID: ${currentUID}</p>
+            <p>Score: ${score}</p>
+            <p>Rating: ${rating}</p>
+            <p>Issued At: ${formatted}</p>
+          `;
+        }
+      } catch (err) {
+        console.error(err);
+        resultArea.innerHTML = `<p style="color:red;">조회 에러: ${err.message}</p>`;
+      }
+    });
+  </script>
+</body>
+</html>
